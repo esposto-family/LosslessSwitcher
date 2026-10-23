@@ -238,7 +238,14 @@ class OutputDevices: ObservableObject {
     func getDeviceSampleRate() {
         let defaultDevice = self.selectedOutputDevice ?? self.defaultOutputDevice
         guard let sampleRate = defaultDevice?.nominalSampleRate else { return }
-        self.updateSampleRate(sampleRate, bitDepth: nil)
+        // Read the device's CURRENT physical-format depth rather than passing nil.
+        // This runs on every device- and rate-change notification, including the one
+        // our own switch provokes, so a nil here overwrote the real depth that
+        // switchLatestSampleRate had just published — leaving the menu stuck on
+        // "? bit" moments after each successful switch. Reporting the hardware's
+        // actual depth is also consistent with showing the device's live rate.
+        let bitDepth = defaultDevice?.streams(scope: .output)?.first?.physicalFormat?.mBitsPerChannel
+        self.updateSampleRate(sampleRate, bitDepth: bitDepth.map { Int($0) })
     }
 
     // Transports LS may write a sample rate to: real hardware wired to this machine,
