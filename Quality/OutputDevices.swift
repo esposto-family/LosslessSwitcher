@@ -241,23 +241,62 @@ class OutputDevices: ObservableObject {
         self.updateSampleRate(sampleRate, bitDepth: nil)
     }
 
-    // Bluetooth routes (AirPods etc.) negotiate their own sample rate, and macOS
-    // moves them on its own — an AirPods Pro drops to 24 kHz the moment the mic
-    // engages. Writing a nominal rate into that negotiation is audible as pops and
-    // glitches, and the self-correcting pin makes it worse: it sees the rate move
-    // away from the pin and writes again, every tick, fighting CoreAudio.
+    // Transports LS may write a sample rate to: real hardware wired to this machine,
+    // where nothing else holds an opinion about the rate. This is an ALLOWLIST, so
+    // everything absent is refused — and that is the point. The excluded transports
+    // each have an owner that outranks us:
     //
-    // So LS goes completely inert whenever Bluetooth is the active route. Input is
-    // checked as well as output: a Bluetooth mic forces the headset into its voice
-    // mode, which is exactly when the rate flapping happens.
-    private func bluetoothRouteIsActive() -> Bool {
-        func isBluetooth(_ device: AudioDevice?) -> Bool {
-            guard let transport = device?.transportType else { return false }
-            return transport == .bluetooth || transport == .bluetoothLE
+    //   blue/blea  Bluetooth, Bluetooth LE — the rate is a product of the negotiated
+    //              profile. An AirPods Pro sits at 24 kHz whenever it is also the
+    //              default input, because the mic engaging forces voice mode. macOS
+    //              ACCEPTS a write there (status 0) and then ignores it, so we would
+    //              never read back what we asked for and would rewrite every tick —
+    //              one audible pop per tick, which is exactly what happened.
+    //   airp       AirPlay — macOS negotiates the rate with the far end.
+    //   ccwd/ccwl  Continuity capture (an iPhone acting as mic/camera) — macOS owns it.
+    //   rscr/rstr  Remote screen / remote streaming — virtualised by the host.
+    //   grup/fgrp  Aggregate and auto-aggregate — wrappers; the rate belongs to the
+    //              member devices, not the wrapper.
+    //   virt       Virtual drivers (Teams Audio, NoMachine, loopback utilities).
+    //   0          Unknown — if we cannot identify the transport, we do not write.
+    //
+    // Read as the raw CoreAudio value rather than SimplyCoreAudio's TransportType:
+    // that enum maps only 14 of the 18 constants and funnels the rest into .unknown,
+    // which would make Continuity capture and remote routes indistinguishable from a
+    // transport that simply could not be read. An allowlist also fails safe for any
+    // transport Apple adds in a later release.
+    private static let writableTransportTypes: Set<UInt32> = [
+        kAudioDeviceTransportTypeUSB,
+        kAudioDeviceTransportTypeBuiltIn,
+        kAudioDeviceTransportTypePCI,
+        kAudioDeviceTransportTypeFireWire,
+        kAudioDeviceTransportTypeThunderbolt,
+        kAudioDeviceTransportTypeAVB,
+        kAudioDeviceTransportTypeHDMI,
+        kAudioDeviceTransportTypeDisplayPort,
+    ]
+
+    // Only the device we would actually write to is checked. The default INPUT is
+    // deliberately not consulted: a Bluetooth mic puts the headset into voice mode,
+    // but that is the headset's problem, and it cannot affect whether a USB DAC
+    // honours a write. Gating on the input too would disable LS for a wired DAC
+    // during any call taken on AirPods.
+    private func canWriteRate(to device: AudioDevice?) -> Bool {
+        guard let device else { return false }
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var transport: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(device.id, &address, 0, nil, &size, &transport) == noErr else {
+            return false
         }
-        if isBluetooth(self.selectedOutputDevice ?? self.defaultOutputDevice) { return true }
-        if isBluetooth(self.coreAudio.defaultInputDevice) { return true }
-        return false
+        return Self.writableTransportTypes.contains(transport)
+    }
+
+    private func canWriteCurrentOutput() -> Bool {
+        canWriteRate(to: self.selectedOutputDevice ?? self.defaultOutputDevice)
     }
 
     // Bundle ids of every process currently producing audio OUTPUT, via the
@@ -318,9 +357,10 @@ class OutputDevices: ObservableObject {
     // pin is back to the natural rate. If a DAC ever needs the high-rate workaround
     // again, raise this one constant.
     private func evaluateUnknownSource() {
-        // Inert on Bluetooth, and forget any pin state so returning to a wired DAC
-        // re-evaluates from scratch rather than acting on what was true before.
-        guard !bluetoothRouteIsActive() else {
+        // Inert on any transport we must not write to, and forget the pin state so
+        // returning to a wired DAC re-evaluates from scratch rather than acting on
+        // what was true before.
+        guard canWriteCurrentOutput() else {
             unknownSourceStreak = 0
             didPinDefaultForUnknown = false
             pinAppliedRate = nil
@@ -430,8 +470,8 @@ class OutputDevices: ObservableObject {
     }
     
     func switchLatestSampleRate(format: AudioFormat, isUnknownSourcePin: Bool = false) {
-        // Never write a rate while a Bluetooth route is active; see bluetoothRouteIsActive.
-        guard !bluetoothRouteIsActive() else { return }
+        // Only write to transports that own their own rate; see writableTransportTypes.
+        guard canWriteCurrentOutput() else { return }
 
         let defaultDevice = self.selectedOutputDevice ?? self.defaultOutputDevice
         
