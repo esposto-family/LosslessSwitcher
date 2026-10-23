@@ -566,6 +566,13 @@ class OutputDevices: ObservableObject {
         }
     }
     
+    // The now-playing source went away entirely. Clear the cached player identity so
+    // evaluateUnknownSource can't defer to (or be blocked by) an app that has stopped.
+    func nowPlayingDidClear() {
+        self.currentPlayerBundleID = nil
+        self.currentPlayerIsPlaying = false
+    }
+
     func trackDidChange(_ newTrack: TrackInfo) {
         let mt = MediaTrack(trackInfo: newTrack)
         // Track which app is now-playing and whether it's actually playing (set
