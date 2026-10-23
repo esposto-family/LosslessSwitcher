@@ -39,6 +39,9 @@ class OutputDevices: ObservableObject {
     // device after an unknown-source pin ends, since an ongoing handled track won't
     // re-log to trigger a fresh switch.
     private var lastHandledRate: Float64?
+    // Pending "ask Music directly" check for the current track; cancelled when the
+    // track changes again or when the log supplies a format first.
+    private var formatFallbackWorkItem: DispatchWorkItem?
     // The rate actually applied by the most recent unknown-source pin (the device's
     // nearest supported rate to 384 kHz). Compared against the live device rate so a
     // pin that got clobbered by another app is re-applied; nil when no pin is active.
@@ -679,6 +682,43 @@ class OutputDevices: ObservableObject {
         self.currentPlayerIsPlaying = false
     }
 
+    // Music logs a track's format when it PREFETCHES that track. If the prefetch
+    // happened before LS was running — or before the track was ever queued in this
+    // session — no format log ever arrives for it, and skipping back to it produces
+    // none either, because Music already has the format loaded and only logs the
+    // *next* prefetch. The collection then holds the track with a nil format, the
+    // pairing loop reports a track match with nothing to apply, and the device is
+    // never switched. Observed live: a 192 kHz track sat on a 96 kHz device across
+    // four visits while a 192 kHz format entry sat under a different track's title.
+    //
+    // Music itself always knows, so ask it. This runs only when the log has given us
+    // nothing for the track that is actually playing, so the log stays authoritative.
+    // The delay is needed because `sample rate of current track` reads stale for a
+    // beat after a track change (measured: 48000 for ~2s before correcting to 96000).
+    private func scheduleFormatFallback(for track: MediaTrack) {
+        formatFallbackWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            guard self.currentTrack == track else { return }
+            // The log won the race; its rate and bit depth are better than ours.
+            if let pair = self.collection[track.title ?? ""], pair.format != nil { return }
+
+            // NSAppleScript is not thread-safe; run it on the main thread.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.currentTrack == track else { return }
+                guard let rate = self.getSampleRateFromAppleScript(), rate > 0 else { return }
+                self.processQueue.async { [weak self] in
+                    guard let self, self.currentTrack == track else { return }
+                    // No bit depth available from AppleScript; nil defers to the
+                    // device's nearest, as the unknown-source pin does.
+                    self.switchLatestSampleRate(format: AudioFormat(sampleRate: Int(rate), bitDepth: nil))
+                }
+            }
+        }
+        formatFallbackWorkItem = work
+        pairHandlingQueue.asyncAfter(deadline: .now() + 3, execute: work)
+    }
+
     func trackDidChange(_ newTrack: TrackInfo) {
         let mt = MediaTrack(trackInfo: newTrack)
         // Track which app is now-playing and whether it's actually playing (set
@@ -706,6 +746,7 @@ class OutputDevices: ObservableObject {
                 self?.collection[key] = .init(track: pair)
             }
             self?.updateRequester.send()
+            self?.scheduleFormatFallback(for: mt)
         }
         
         
