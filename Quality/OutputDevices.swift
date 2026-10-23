@@ -241,6 +241,25 @@ class OutputDevices: ObservableObject {
         self.updateSampleRate(sampleRate, bitDepth: nil)
     }
 
+    // Bluetooth routes (AirPods etc.) negotiate their own sample rate, and macOS
+    // moves them on its own — an AirPods Pro drops to 24 kHz the moment the mic
+    // engages. Writing a nominal rate into that negotiation is audible as pops and
+    // glitches, and the self-correcting pin makes it worse: it sees the rate move
+    // away from the pin and writes again, every tick, fighting CoreAudio.
+    //
+    // So LS goes completely inert whenever Bluetooth is the active route. Input is
+    // checked as well as output: a Bluetooth mic forces the headset into its voice
+    // mode, which is exactly when the rate flapping happens.
+    private func bluetoothRouteIsActive() -> Bool {
+        func isBluetooth(_ device: AudioDevice?) -> Bool {
+            guard let transport = device?.transportType else { return false }
+            return transport == .bluetooth || transport == .bluetoothLE
+        }
+        if isBluetooth(self.selectedOutputDevice ?? self.defaultOutputDevice) { return true }
+        if isBluetooth(self.coreAudio.defaultInputDevice) { return true }
+        return false
+    }
+
     // Bundle ids of every process currently producing audio OUTPUT, via the
     // macOS 14.2+ per-process Core Audio API. Read-only; needs no permission.
     private func outputProducingBundleIDs() -> Set<String> {
@@ -299,6 +318,15 @@ class OutputDevices: ObservableObject {
     // pin is back to the natural rate. If a DAC ever needs the high-rate workaround
     // again, raise this one constant.
     private func evaluateUnknownSource() {
+        // Inert on Bluetooth, and forget any pin state so returning to a wired DAC
+        // re-evaluates from scratch rather than acting on what was true before.
+        guard !bluetoothRouteIsActive() else {
+            unknownSourceStreak = 0
+            didPinDefaultForUnknown = false
+            pinAppliedRate = nil
+            return
+        }
+
         let producers = outputProducingBundleIDs()
         let unknown = producers
             .subtracting(handledOutputBundleIDs)
@@ -402,6 +430,9 @@ class OutputDevices: ObservableObject {
     }
     
     func switchLatestSampleRate(format: AudioFormat, isUnknownSourcePin: Bool = false) {
+        // Never write a rate while a Bluetooth route is active; see bluetoothRouteIsActive.
+        guard !bluetoothRouteIsActive() else { return }
+
         let defaultDevice = self.selectedOutputDevice ?? self.defaultOutputDevice
         
         if let supported = defaultDevice?.nominalSampleRates {
