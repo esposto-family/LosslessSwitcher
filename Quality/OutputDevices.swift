@@ -446,7 +446,13 @@ class OutputDevices: ObservableObject {
                 if enableBitDepthDetection {
                     self.setFormats(device: defaultDevice, format: suitableFormat)
                 }
-                else if suitableFormat.mSampleRate != previousSampleRate { // bit depth disabled
+                // Compare against the device's LIVE nominal rate, not our own
+                // previousSampleRate cache: the cache goes stale whenever another app
+                // (or CoreAudio) moves the device, which made us skip a write the
+                // device actually needed, and issue redundant ones it didn't. A
+                // redundant write is audible as a gap between same-rate tracks.
+                // (Upstream PR #224 reaches the same conclusion.)
+                else if suitableFormat.mSampleRate != defaultDevice?.nominalSampleRate { // bit depth disabled
                     defaultDevice?.setNominalSampleRate(suitableFormat.mSampleRate)
                 }
                 self.updateSampleRate(suitableFormat.mSampleRate, bitDepth: Int(suitableFormat.mBitsPerChannel))
