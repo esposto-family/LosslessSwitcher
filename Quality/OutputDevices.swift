@@ -190,7 +190,7 @@ class OutputDevices: ObservableObject {
 
         // Poll the per-process audio API for output from apps we don't handle
         // (browsers, video streaming, games). They don't expose a rate and don't
-        // switch the device, so we pin it to 384 kHz for them (ZH3 workaround; see
+        // switch the device, so we pin it to 48 kHz for them (see
         // evaluateUnknownSource). Cheap property reads.
         unknownSourceTimerCancellable = Timer.publish(every: 2, on: .main, in: .common)
             .autoconnect()
@@ -291,13 +291,13 @@ class OutputDevices: ObservableObject {
     // audio source at the same time — a second source (esp. Qobuz, which drives the
     // device itself) can pull the rate off the lossless track's native value.
     //
-    // When audio is coming ONLY from an app we don't handle (e.g. a browser),
-    // pin the device to 384 kHz — those apps don't report a rate or switch the
-    // device themselves. NOTE: normally 48 kHz (the video/web rate) would be the
-    // natural choice, but this is pinned high (384 kHz) as a workaround for a Fosi
-    // ZH3 firmware bug that drops audio in the silences between speech at normal
-    // rates; per Fosi's FAQ, running at 384 kHz avoids it. Revert to 48000 once the
-    // ZH3 firmware is updated (the update needs Windows).
+    // When audio is coming ONLY from an app we don't handle (e.g. a browser), pin the
+    // device to 48 kHz — the web/video rate — since those apps neither report a rate
+    // nor switch the device themselves. This was 384 kHz for a while as a workaround
+    // for a Fosi ZH3 firmware bug that dropped audio in the silences between speech;
+    // that DAC is no longer in use and the symptom hasn't appeared on the ZD3, so the
+    // pin is back to the natural rate. If a DAC ever needs the high-rate workaround
+    // again, raise this one constant.
     private func evaluateUnknownSource() {
         let producers = outputProducingBundleIDs()
         let unknown = producers
@@ -349,7 +349,7 @@ class OutputDevices: ObservableObject {
             return
         }
         didPinDefaultForUnknown = true
-        self.switchLatestSampleRate(format: AudioFormat(sampleRate: 384000, bitDepth: 24), isUnknownSourcePin: true)
+        self.switchLatestSampleRate(format: AudioFormat(sampleRate: 48000, bitDepth: nil), isUnknownSourcePin: true)
     }
     
     func getSampleRateFromAppleScript() -> Double? {
