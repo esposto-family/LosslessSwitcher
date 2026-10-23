@@ -14,18 +14,32 @@ class Defaults: ObservableObject {
     private let kUserPreferBitDepthDetection = "com.vincent-neo.LosslessSwitcher-Key-BitDepthDetection"
     private let kShellScriptPath = "KeyShellScriptPath"
     private let kUserPreferSampleRateMultiples = "PreferSampleRateMultiples"
+    // Ceiling in Hz for any rate LS writes; 0 means no ceiling. Needed when the
+    // output device feeds further gear downstream (e.g. a DAC's optical/coax out
+    // into DACs that stop at 192/24) — the device itself advertises rates the rest
+    // of the chain cannot lock to.
+    private let kMaxSampleRate = "com.vincent-neo.LosslessSwitcher-Key-MaxSampleRate"
     
     private init() {
         UserDefaults.standard.register(defaults: [
             kUserPreferIconStatusBarItem : true,
             kUserPreferBitDepthDetection : false,
-            kUserPreferSampleRateMultiples : false
+            kUserPreferSampleRateMultiples : false,
+            kMaxSampleRate : 0
         ])
         
         self.shellScriptPath = UserDefaults.standard.string(forKey: kShellScriptPath)
         self.userPreferIconStatusBarItem = UserDefaults.standard.bool(forKey: kUserPreferIconStatusBarItem)
         self.userPreferBitDepthDetection = UserDefaults.standard.bool(forKey: kUserPreferBitDepthDetection)
         self.userPreferSampleRateMultiples = UserDefaults.standard.bool(forKey: kUserPreferSampleRateMultiples)
+        self.maxSampleRate = UserDefaults.standard.integer(forKey: kMaxSampleRate)
+    }
+
+    /// Highest rate in Hz that LS may set, or 0 for no limit.
+    @Published var maxSampleRate: Int {
+        willSet {
+            UserDefaults.standard.set(newValue, forKey: kMaxSampleRate)
+        }
     }
     
     @Published var userPreferSampleRateMultiples: Bool {

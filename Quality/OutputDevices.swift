@@ -248,6 +248,28 @@ class OutputDevices: ObservableObject {
         self.updateSampleRate(sampleRate, bitDepth: bitDepth.map { Int($0) })
     }
 
+    /// Rates the current output device advertises, for the Maximum Sample Rate menu.
+    var currentDeviceSupportedRates: [Float64] {
+        let device = self.selectedOutputDevice ?? self.defaultOutputDevice
+        return (device?.nominalSampleRates ?? []).sorted()
+    }
+
+    // Apply the user's maximum-rate ceiling, staying inside the source's clock
+    // family. A 352.8 kHz track capped at 192 kHz belongs on 176.4 (a 44.1
+    // multiple), not 192 — crossing families forces a worse resample than the rate
+    // reduction itself. Falls back to the highest rate under the cap only when the
+    // device offers nothing in the right family.
+    private func applyMaxRate(_ requested: Float64, supported: [Float64]) -> Float64 {
+        let cap = Defaults.shared.maxSampleRate
+        guard cap > 0, requested > Float64(cap) else { return requested }
+        let base = Int(requested) % 44100 == 0 ? 44100 : 48000
+        let withinCap = supported.filter { $0 <= Float64(cap) }
+        if let sameFamily = withinCap.filter({ Int($0) % base == 0 }).max() {
+            return sameFamily
+        }
+        return withinCap.max() ?? requested
+    }
+
     // Transports LS may write a sample rate to: real hardware wired to this machine,
     // where nothing else holds an opinion about the rate. This is an ALLOWLIST, so
     // everything absent is refused — and that is the point. The excluded transports
@@ -483,7 +505,7 @@ class OutputDevices: ObservableObject {
         let defaultDevice = self.selectedOutputDevice ?? self.defaultOutputDevice
         
         if let supported = defaultDevice?.nominalSampleRates {
-            let sampleRate = Float64(format.sampleRate)
+            let sampleRate = self.applyMaxRate(Float64(format.sampleRate), supported: supported)
             let bitDepth = Int32(format.bitDepth ?? 32)
             
 //            if self.currentTrack == self.previousTrack, let prevSampleRate = currentSampleRate, prevSampleRate > sampleRate {

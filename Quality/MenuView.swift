@@ -51,6 +51,30 @@ struct MenuView: View {
             
             Menu {
                 Button {
+                    defaults.maxSampleRate = 0
+                } label: {
+                    if defaults.maxSampleRate == 0 {
+                        Image(systemName: "checkmark")
+                    }
+                    Text("Unlimited")
+                }
+
+                ForEach(outputDevices.currentDeviceSupportedRates, id: \.self) { rate in
+                    Button {
+                        defaults.maxSampleRate = Int(rate)
+                    } label: {
+                        Text(String(format: "%.1f kHz", rate / 1000))
+                        if defaults.maxSampleRate == Int(rate) {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            } label: {
+                Text("Maximum Sample Rate")
+            }
+
+            Menu {
+                Button {
                     outputDevices.selectedOutputDevice = nil
                     defaults.selectedDeviceUID = nil
                 } label: {
