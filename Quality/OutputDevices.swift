@@ -251,10 +251,15 @@ class OutputDevices: ObservableObject {
         self.updateSampleRate(sampleRate, bitDepth: bitDepth.map { Int($0) })
     }
 
-    /// Rates the current output device advertises, for the Maximum Sample Rate menu.
-    var currentDeviceSupportedRates: [Float64] {
-        let device = self.selectedOutputDevice ?? self.defaultOutputDevice
-        return (device?.nominalSampleRates ?? []).sorted()
+    /// Choices for the Maximum Sample Rate menu. Deliberately a FIXED list of the
+    /// standard rates rather than the current device's advertised ones: the cap is a
+    /// single global policy, so listing per-device rates would both hide the rate you
+    /// want (192 is unselectable while only the built-in speakers, which stop at 96,
+    /// are attached) and let a cap chosen for one device silently constrain another.
+    /// Rates the attached device cannot do are harmless — the ceiling simply never
+    /// binds, since the device's own rate list is still what gets picked from.
+    var maxRateChoices: [Float64] {
+        [44100, 48000, 88200, 96000, 176400, 192000, 352800, 384000]
     }
 
     // Apply the user's maximum-rate ceiling, staying inside the source's clock

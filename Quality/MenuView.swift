@@ -59,7 +59,7 @@ struct MenuView: View {
                     Text("Unlimited")
                 }
 
-                ForEach(outputDevices.currentDeviceSupportedRates, id: \.self) { rate in
+                ForEach(outputDevices.maxRateChoices, id: \.self) { rate in
                     Button {
                         defaults.maxSampleRate = Int(rate)
                     } label: {
